@@ -88,6 +88,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->context_switch_num = 0;
 
   release(&ptable.lock);
 
@@ -260,7 +261,7 @@ exit(void)
         wakeup1(initproc);
     }
   }
-
+  
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
   sched();
@@ -325,33 +326,41 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+
   for(;;){
-    // Enable interrupts on this processor.
+    // Enable interrupts on this processor. 
     sti();
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    
+    //scheduler thread find runnable process - koo
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){	    
+      	    
       if(p->state != RUNNABLE)
         continue;
-
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
-      switchuvm(p);
+      switchuvm(p); //load runnable process (in user space) into kernel  
       p->state = RUNNING;
-
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
-
+      
+      // scheduler find process!
+      // swtch() store current process context into PCB which means p->context and call sched() - koo
+      swtch(&(c->scheduler), p->context); //it order processor switch process (in user space) to excute
+      switchkvm(); //after swtch() in sched(), scheduler load info (register..) into kernel 
+      
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+      
+      p->context_switch_num += 1;
+      if(p->state == ZOMBIE){
+      	cprintf("\n%s(%d) performed %d context switches\n", p->name, p->pid,  p->context_switch_num); 	
+      }
     }
-    release(&ptable.lock);
-
+    release(&ptable.lock); 
   }
 }
 
@@ -377,7 +386,7 @@ sched(void)
   if(readeflags()&FL_IF)
     panic("sched interruptible");
   intena = mycpu()->intena;
-  swtch(&p->context, mycpu()->scheduler);
+  swtch(&p->context, mycpu()->scheduler);//this code order scheduller into kernel!
   mycpu()->intena = intena;
 }
 

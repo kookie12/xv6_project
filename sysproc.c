@@ -89,3 +89,23 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int 
+sys_getcswitch(void)
+{  
+  return myproc()->context_switch_num;
+}
+
+int 
+sys_setcswitch(void)
+{
+  int n;
+
+  if(argint(0, &n) < 0)
+    return -1;
+  
+  myproc()->context_switch_num = n;
+  return 0;
+}
+
+
