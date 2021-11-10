@@ -6,6 +6,15 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "stddef.h"
+
+struct pstat pst;
+struct proc* top_q[NPROC];
+struct proc* middle_q[NPROC];
+struct proc* bottom_q[NPROC];
+int top_index = -1;
+int middle_index = -1;
+int bottom_index = -1;
 
 struct {
   struct spinlock lock;
@@ -77,17 +86,23 @@ allocproc(void)
   char *sp;
 
   acquire(&ptable.lock);
-
+  //cprintf("\n ##### new process acllocation ##### \n");
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+		//cprintf("here come 1\n"); 이게 엄청 많이 나와서 렉먹음
     if(p->state == UNUSED)
       goto found;
-
+  
   release(&ptable.lock);
   return 0;
 
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->priority = 0; // revised by koo
+  p->time_ticks = 0; 
+
+  // top_index++;
+  // top_q[top_index] = p;
 
   release(&ptable.lock);
 
@@ -122,7 +137,7 @@ userinit(void)
 {
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
-
+  cprintf("userinit\n");
   p = allocproc();
   
   initproc = p;
@@ -148,8 +163,10 @@ userinit(void)
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
 
+  // put the first process in the top q - first process will be initcode, pid 1 (revised by koo)
   p->state = RUNNABLE;
-
+  top_index++;
+  top_q[top_index] = p;
   release(&ptable.lock);
 }
 
@@ -214,8 +231,10 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  // When a new process is created through forks, put it in the top q. (revised by koo)
   np->state = RUNNABLE;
-
+  top_index++;
+  top_q[top_index] = np;
   release(&ptable.lock);
 
   return pid;
@@ -311,6 +330,23 @@ wait(void)
   }
 }
 
+// It determines whether all the processes in that q are sleep or not. (revised by koo)
+int 
+sleep_checker(struct proc* q, int index)
+{
+  int proc_sleep_num = 0;
+  for(int i = 0; i <= index; i++){
+    if(q[i].state == SLEEPING)
+      proc_sleep_num++;
+  }
+  if(proc_sleep_num == index + 1){
+    return 0; // If all processes in q are sleep, then return 0.
+  }
+  else{
+    return 1; // Otherwise, I will return 1.
+  }
+}
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -325,31 +361,219 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+  int i;
+  int j;
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+		
+		//Top Q loop
+    if(top_index != -1){
+      
+      for(i = 0; i <= top_index; i++){
+        if(top_q[i]->state != RUNNABLE){ 
+          continue;
+        }
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+				p = top_q[i];
+				c->proc = p;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+				switchuvm(p);
+				p->state = RUNNING; // UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE
+        swtch(&(c->scheduler), p->context); 
+        switchkvm();
+			  if(p->state == RUNNABLE){
+          p->time_ticks++;
+        }
+        else if(p->state == SLEEPING){
+          break;
+        }
+        else if(p->state == ZOMBIE){
+          // If it becomes zombie after 1 tick, delete it from top q.
+          top_q[i] = NULL;
+          if(i < top_index){
+            for(j = i; j < top_index; j++){
+              top_q[j] = top_q[j + 1];
+            }
+            top_q[top_index] = NULL;
+          }
+          top_index--;
+          c->proc = 0;
+          break;
+        }
+      
+        if(p->time_ticks == 1 && p->state == RUNNABLE){  
+          // Even after 1 tick, if process still RUNNALBE, lower it to middle q.
+					p->time_ticks = 0;
+					p->priority++;
+          middle_index++;
+					middle_q[middle_index] = p;
+	
+				  // Delete it from the top q.
+					top_q[i] = NULL;
+					for(j = i; j <= top_index - 1; j++){
+						top_q[j] = top_q[j + 1];
+					}
+					top_q[top_index] = NULL;
+					p->time_ticks = 0;
+					top_index--;
+        } 
+				c->proc = 0;
+      }
     }
+    
+		// Middle Q loop
+    if(middle_index != -1){
+      for(i = 0; i <= middle_index; i++){	
+       
+        // If there is one or more processes in the top q, execute the sleep checker.
+        if(top_index != -1){
+          if(sleep_checker(*top_q, top_index) == 1){
+            break;
+          }
+        }
+
+        if(middle_q[i]->state != RUNNABLE){
+          continue;
+        }
+  
+        p = middle_q[i];
+        while(p->time_ticks < 4 && p->state == RUNNABLE){
+          // If it is executed in middle q, 4 ticks are guaranteed unconditionally.
+          c->proc = p;
+          switchuvm(p);
+          p->state = RUNNING;
+          swtch(&(c->scheduler), p->context);
+          switchkvm();
+          
+          if(p->state == RUNNABLE){
+            p->time_ticks++;
+          }
+          else if(p->state == SLEEPING){
+            // If it becomes SLEEPING before 4 ticks, escape while loop.
+            break;
+          }
+          else if(p->state == ZOMBIE){
+            // If it becomes ZOMBIE before 4 ticks, delete it from top q.
+            middle_q[i] = NULL;
+            if(i < middle_index){
+              for(j = i; j < middle_index; j++){
+                middle_q[j] = middle_q[j + 1];
+              }
+              middle_q[middle_index] = NULL;
+            }
+            middle_index--;
+            c->proc = 0;
+            break;
+          }
+          
+        }
+				
+        if(p->time_ticks == 4 && middle_q[i]->state == RUNNABLE){
+					// If process still RUNNALBE even after 4 tick, lower it to bottom q.
+          bottom_index++;
+					bottom_q[bottom_index] = p;
+					
+          // Delete it from the middle q.
+					p->time_ticks = 0;
+					p->priority++;
+					middle_q[i] = NULL;
+          if(i < middle_index){
+            for(j = i; j < middle_index; j++){
+              middle_q[j] = middle_q[j + 1];
+            }
+            middle_q[middle_index] = NULL;
+          }
+					middle_index--;
+        } 
+        c->proc = 0;
+      }
+    } 
+
+		
+		// Bottom Q loop
+    if(bottom_index != -1){
+      
+      for(i = 0; i <= bottom_index; i++){	
+
+        // If there is one or more processes in the top q and bottom q, execute the sleep checker.
+        if(top_index != -1){
+          if(sleep_checker(*top_q, top_index) == 1){
+            break;
+          }
+        }
+
+        if(middle_index != -1){
+          if(sleep_checker(*middle_q, middle_index) == 1){
+            break;
+          }
+        }
+
+        if(bottom_q[i]->state != RUNNABLE){
+          continue;
+        }
+
+        p = bottom_q[i];
+        while(p->time_ticks < 16){
+          c->proc = p;
+          p->time_ticks++;
+          switchuvm(p);
+          p->state = RUNNING;
+          swtch(&(c->scheduler), p->context);
+          switchkvm();
+          if(p->state == RUNNABLE){
+            p->time_ticks++;
+          }
+          else if(p->state == SLEEPING){
+            // If it becomes SLEEPING before 16 ticks, escape while loop.
+            break;
+          }
+          else if(p->state == ZOMBIE){
+            // If it becomes ZOMBIE, delete it from bottom q.
+            bottom_q[i] = NULL;
+            if(i < bottom_index){
+              for(j = i; j < bottom_index; j++){
+                bottom_q[j] = bottom_q[j + 1];
+              }
+              bottom_q[bottom_index] = NULL;
+            }
+            bottom_index--;
+            c->proc = 0;
+            break;
+          }
+        }
+        
+        if(p->time_ticks >= 16){
+          p->time_ticks = 0;
+        } 
+        c->proc = 0;
+      } 
+    }
+    /* original xv6 scheduler code using round robin */
+    // for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    //   if(p->state != RUNNABLE)
+    //     continue;
+      
+    //   // Switch to chosen process.  It is the process's job
+    //   // to release ptable.lock and then reacquire it
+    //   // before jumping back to us.
+    //   c->proc = p;
+    //   switchuvm(p);
+    //   p->state = RUNNING;
+
+    //   swtch(&(c->scheduler), p->context);
+    //   switchkvm();
+      
+		// 	//cprintf("priority : %d\n", p->pst->priority);
+		// 	//cprintf("ticks : %d\n", p->pst->ticks);
+    //   // Process is done running for now.
+    //   // It should have changed its p->state before coming back.
+    //   c->proc = 0;
+    // } 
     release(&ptable.lock);
 
   }
@@ -458,10 +682,12 @@ static void
 wakeup1(void *chan)
 {
   struct proc *p;
+  //int i;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+		if(p->state == SLEEPING && p->chan == chan)
       p->state = RUNNABLE;
+	    p->time_ticks = 0;
 }
 
 // Wake up all processes sleeping on chan.
