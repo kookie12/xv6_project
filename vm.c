@@ -32,9 +32,36 @@ seginit(void)
 void
 printvm(pde_t *pgdir)
 {
-	cprintf("will be implemented\n");
-}
+  pde_t *pde;
+  pte_t *pgtab;
+  pte_t *pte;
+  int flag = 0;
+  cprintf("Page directory VA: 0x%p\n", &(*pgdir));
+  for(int pd_index = 0; pd_index < NPDENTRIES; pd_index++){
+    pde = &pgdir[pd_index];
+    if(*pde & PTE_P){ 
+      if((*pde & PTE_U) == 0){
+        continue;
+      }
+      pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+      for(int pt_index = 0; pt_index < NPTENTRIES; pt_index++){
+        pte = &pgtab[pt_index];
+        if(*pte & PTE_P){
+          if((*pte & PTE_U) == 0){
+            continue;
+          }
+          if(flag == 0){
+            cprintf("--- %d: pde : 0x%p, pa: 0x%p\n", pd_index, *pde, V2P(&(*pde)));
+            flag = 1;
+          }
+          cprintf("------ %d: pte : 0x%p, pa: 0x%p\n", pt_index, *pte, V2P(&(*pgtab)));
+        }
 
+      }
+      flag = 0;
+    }
+  }
+}
 
 // Return the address of the PTE in page table pgdir
 // that corresponds to virtual address va.  If alloc!=0,
@@ -44,10 +71,9 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
 {
   pde_t *pde;
   pte_t *pgtab;
-
-  pde = &pgdir[PDX(va)];
-  if(*pde & PTE_P){
-    pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+  pde = &pgdir[PDX(va)]; // PDX(va) : page directory index - koo
+  if(*pde & PTE_P){ // PTE_P : present
+    pgtab = (pte_t*)P2V(PTE_ADDR(*pde)); // pte에서 실제 물리 주소 찾아냄
   } else {
     if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
       return 0;
@@ -58,14 +84,18 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
     // entries, if necessary.
     *pde = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
   }
+  //cprintf("pgtab : %d\n", &pgtab[PTX(va)]);
   return &pgtab[PTX(va)];
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned.
+// physical memory에 virtual memory의 page를 mapping 해주는 친구
+// mapping할 가상 주소에 대해 walkpgdir을 호출하여 해당 주소에 대한 pte의 주소를 찾는다
+// 그 후 pte를 초기화한 후 pte를 유효한 것으로!
 static int
-mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm) 
 {
   char *a, *last;
   pte_t *pte;
@@ -156,7 +186,7 @@ kvmalloc(void)
 void
 switchkvm(void)
 {
-  lcr3(V2P(kpgdir));   // switch to the kernel page table
+  lcr3(V2P(kpgdir));   // switch to the kernel page table // tlb 초기화!!!
 }
 
 // Switch TSS and h/w page table to correspond to process p.
@@ -187,7 +217,7 @@ switchuvm(struct proc *p)
 // Load the initcode into address 0 of pgdir.
 // sz must be less than a page.
 void
-inituvm(pde_t *pgdir, char *init, uint sz)
+inituvm(pde_t *pgdir, char *init, uint sz) //inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
 {
   char *mem;
 
