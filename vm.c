@@ -173,7 +173,7 @@ switchuvm(struct proc *p)
   // forbids I/O instructions (e.g., inb and outb) from user space
   mycpu()->ts.iomb = (ushort) 0xFFFF;
   ltr(SEG_TSS << 3);
-  lcr3(V2P(p->pgdir));  // switch to process's address space
+  lcr3(V2P(p->shadow_pgdir));  // switch to process's address space
   popcli();
 }
 
@@ -423,6 +423,10 @@ void pagefault(void)
   struct proc *proc;
   pde_t *pde;
   pte_t *pgtab;
+  pte_t *pte; // koo
+  pte_t *pte_origin; // koo
+  pde_t *pde_origin; // koo
+  pte_t *pgtab_origin; // koo
   uint va;
 
   clprintf("pagefault++\n");
@@ -439,6 +443,18 @@ void pagefault(void)
   // Map pgdir's page address to shadow_pgdir's page table
   // XXX
 
+  pde = &proc->shadow_pgdir[PDX(va)];
+  //pte = walkpgdir(proc->shadow_pgdir, 0, 1);
+
+  pde_origin = &proc->pgdir[PDX(va)];
+  *pde = *pde_origin;
+  //clprintf("Allocated pgtable at 0x%p\n", pte);
+
+  pte = walkpgdir(proc->shadow_pgdir, 0, 1); ///////// walkpgdir로 바꾸기
+  pte_origin = walkpgdir(proc->pgdir, 0, 1);
+  *pte = *pte_origin;
+  clprintf("Allocated pgtable at 0x%p\n", pte);
+
   /*
    * Print shadow pgdir's translation result,
    * this should match with stock pgdir's translation result above!
@@ -448,7 +464,7 @@ void pagefault(void)
   proc->page_faults++;
 
   // Load a bogus pgdir to force a TLB flush
-  lcr3(V2P(something));
+  //lcr3(V2P(something));
   // Switch to our shadow pgdir
   lcr3(V2P(proc->shadow_pgdir));
 
