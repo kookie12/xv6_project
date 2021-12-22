@@ -71,7 +71,9 @@ struct segdesc {
 //  \--- PDX(va) --/ \--- PTX(va) --/
 
 // page directory index
-#define PDX(va)         (((uint)(va) >> PDXSHIFT) & 0x3FF)
+#define PDX(va)         (((uint)(va) >> PDXSHIFT) & 0x3FF) // 0x3FF = 0011 1111 1111(2) 10bit만큼을 1과 and 연산
+#define PD1X(va)        (((uint)(va) >> PD1XSHIFT) & 0x1F) // 0x1F = 0001 1111(2) 5bit
+#define PD2X(va)        (((uint)(va) >> PD2XSHIFT) & 0x1F) // 0x1F = 0001 1111(2) 5bit
 
 // page table index
 #define PTX(va)         (((uint)(va) >> PTXSHIFT) & 0x3FF)
@@ -81,6 +83,7 @@ struct segdesc {
 
 // construct virtual address from indexes and offset
 #define PGADDR(d, t, o) ((uint)((d) << PDXSHIFT | (t) << PTXSHIFT | (o)))
+#define PG1ADDR(d, c, t, o) ((uint)((d) << PD1XSHIFT | (c) << PD2XSHIFT | (t) << PTXSHIFT | (o)))
 
 // Page directory and page table constants.
 #define NPDENTRIES      1024    // # directory entries per page directory
@@ -89,6 +92,8 @@ struct segdesc {
 
 #define PTXSHIFT        12      // offset of PTX in a linear address
 #define PDXSHIFT        22      // offset of PDX in a linear address
+#define PD1XSHIFT       27
+#define PD2XSHIFT       22
 
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
@@ -101,7 +106,9 @@ struct segdesc {
 
 // Address in page table or page directory entry
 #define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF)
-#define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF)
+#define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF) // 0xFFF = 1111 1111 1111(2)는 10진수로 4096 12bit만큼을 1과 and 연산
+#define PG1_ADDR(pde)   ((uint)(pde) & ~0x1F) // 0x1F
+#define PG2_ADDR(pde)   ((uint)(pde) & ~0x3FF)
 
 #ifndef __ASSEMBLER__
 typedef uint pte_t;

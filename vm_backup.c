@@ -32,11 +32,154 @@ seginit(void)
 void
 printvm(pde_t *pgdir1)
 {
-  //여러분들이 3-level paging 을 구조를 출력할 수 있는 코드를 짜셔야 합니다.
+  pde_t *pde1;
+  pde_t *pgdir2;
+  pde_t *pde2;
+  pte_t *pgtab;
+  pte_t *pte;
+  int flag = 0;
+  //cprintf("Page directory VA: 0x%p\n", &(*pgdir1));
+  for(int pd1_index = 0; pd1_index < NPDENTRIES; pd1_index++){
+    pde1 = &pgdir1[pd1_index];
+    if(*pde1 & PTE_P){ 
+      if((*pde1 & PTE_U) == 0){
+        continue;
+      }
+      pgdir2 = (pte_t*)P2V(PG2_ADDR(*pde1));
+      for(int pd2_index = 0; pd2_index < NPTENTRIES; pd2_index++){
+        pde2 = &pgdir2[pd2_index];
+        if(*pde2 & PTE_P){
+          if((*pde2 & PTE_U) == 0){
+            continue;
+          }
+          pgtab = (pte_t*)P2V(PTE_ADDR(*pde2));
+          for(int pt_index = 0; pt_index < NPTENTRIES; pt_index++){
+            pte = &pgtab[pt_index];
+            if(*pte & PTE_P){
+              if((*pte & PTE_U) == 0){
+                continue;
+              }
+              if(flag == 0){
+                cprintf("--- %d: pde1 : 0x%p, pa: 0x%p\n", pd1_index, *pde1, V2P(&(*pgdir1)));
+                flag = 1;
+              }
+              if(flag == 1){
+                cprintf("------ %d: pde2 : 0x%p, pa: 0x%p\n", pd2_index, *pde2, V2P(&(*pgdir2)));
+                flag = 2;
+              }
+              if(flag == 2){
+                cprintf("-------- %d: pte : 0x%p, pa: 0x%p\n", pt_index, *pte, V2P(&(*pgtab)));
+              }
+            }
+          }
+          flag = 0;
+        }
+      }
+    }
+  }
+}
+
+static pte_t *
+pde_walkpgdir(pde_t *pgdir1, const void *va, int alloc) // 3 level paging으로 바꾸기
+{
+  pde_t *pde1;
+  pde_t *pde2;
+  pde_t *pgdir2;
+  pte_t *pgtab;
+  cprintf("walkpgdir\n");
+  pde1 = &pgdir1[PD1X(va)];
+  if(*pde1 & PTE_P){
+    pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
+  } else {
+    if(!alloc || (pgdir2 = (pte_t*)kalloc()) == 0) // kalloc() : 새로운 physical page 할당 
+      return 0;
+    // Make sure all those PTE_P bits are zero.
+    memset(pgdir2, 0, PGSIZE);
+    // The permissions here are overly generous, but they can
+    // be further restricted by the permissions in the page table
+    // entries, if necessary.
+    *pde1 = V2P(pgdir2) | PTE_P | PTE_W | PTE_U;
+    //return &pgdir2[PD2X(va)];
+  }
+
+  pde2 = &pgdir2[PD2X(va)];
+  if(*pde2 & PTE_P){
+    pgtab = (pte_t*)P2V(PG2_ADDR(*pde2));
+  } else{
+    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
+      return 0;
+    memset(pgtab, 0, PGSIZE);
+    *pde2 = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
+    //return 0;
+  }
+  return &pgdir2[PD2X(va)];
 }
 
 static pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
+{
+  pde_t *pde;
+  pte_t *pgtab;
+  //cprintf("k_walkpgdir\n"); -> 렉먹음
+  pde = &pgdir[PDX(va)];
+  if(*pde & PTE_P){
+    pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+  } else {
+    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
+      return 0;
+    // Make sure all those PTE_P bits are zero.
+    memset(pgtab, 0, PGSIZE);
+    // The permissions here are overly generous, but they can
+    // be further restricted by the permissions in the page table
+    // entries, if necessary.
+    *pde = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
+  }
+  return &pgtab[PTX(va)];
+}
+
+static pte_t *
+walkpgdir11(pde_t *pgdir, const void *va, int alloc) // 3 level paging으로 바꾸기
+{
+  pde_t *pde1;
+  pde_t *pde2;
+  pde_t *pgdir2;
+  pte_t *pgtab;
+  cprintf("walkpgdir\n");
+  pde1 = &pgdir[PD1X(va)];
+  if(*pde1 & PTE_P){
+    pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
+    
+  } else {
+    if(!alloc || (pgdir2 = (pte_t*)kalloc()) == 0) // kalloc() : 새로운 physical page 할당 
+      return 0;
+    // Make sure all those PTE_P bits are zero.
+    memset(pgdir2, 0, PGSIZE);
+    // The permissions here are overly generous, but they can
+    // be further restricted by the permissions in the page table
+    // entries, if necessary.
+    *pde1 = V2P(pgdir2) | PTE_P | PTE_W | PTE_U;
+    //return 0;
+    //return &pgdir2[PD2X(va)];
+  }
+
+  pde2 = &pgdir2[PD2X(va)];
+  if(*pde2 & PTE_P){
+    pgtab = (pte_t*)P2V(PG2_ADDR(*pde2));
+  } else{
+    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
+      return 0;
+    memset(pgtab, 0, PGSIZE);
+    *pde2 = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
+    //return 0;
+  }
+  return &pgtab[PTX(va)];
+}
+
+// Return the address of the PTE in page table pgdir
+// that corresponds to virtual address va.  If alloc!=0,
+// create any required page table pages.
+static pte_t *
+k_walkpgdir(pde_t *pgdir, const void *va, int alloc)
 {
   pde_t *pde;
   pte_t *pgtab;
@@ -65,12 +208,26 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm, int is_kernel)
 {
   char *a, *last;
   pte_t *pte;
-
+  cprintf("--------start mappages--------\n");
   a = (char*)PGROUNDDOWN((uint)va);
   last = (char*)PGROUNDDOWN(((uint)va) + size - 1);
   for(;;){
-    if((pte = walkpgdir(pgdir, a, 1)) == 0)
-      return -1;
+    if(is_kernel == 1){
+      //cprintf("here in kernel mappages\n");
+      if((pte = k_walkpgdir(pgdir, a, 1)) == 0){
+        cprintf("here in kernel mappages222\n");
+        return -1;
+      }
+    }
+    else{
+      //clprintf("here in mappages\n");
+      //clprintf("is_kernel : %d\n", is_kernel);
+      if((pte = walkpgdir(pgdir, a, 1)) == 0){
+        cprintf("here in mappages222\n");
+        return -1;
+      } 
+    }
+    //clprintf("why--\n");
     if(*pte & PTE_P)
       panic("remap");
     *pte = pa | perm | PTE_P;
@@ -251,6 +408,39 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   return newsz;
 }
 
+int
+deallocuvm2(pde_t *pgdir, uint oldsz, uint newsz)
+{
+  pte_t *pte;
+  pde_t *pde; // revised by koo
+  uint a, pa;
+
+  if(newsz >= oldsz)
+    return oldsz;
+
+  a = PGROUNDUP(newsz);
+  cprintf("--------start deallocuvm2--------\n");
+  for(; a < oldsz; a += PGSIZE){
+    pte = walkpgdir(pgdir, (char*)a, 0);
+    if(!pte){
+      a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
+      //a = PG1ADDR(PD1X(a) + 1, 0, 0, 0) - PGSIZE;
+    }
+      
+    else if((*pte & PTE_P) != 0){
+      pa = PTE_ADDR(*pte);
+      if(pa == 0)
+        panic("kfree");
+      char *v = P2V(pa);
+      kfree(v);
+      *pte = 0;
+    }
+  }
+  cprintf("--------finish deallocuvm2--------\n");
+  return newsz;
+}
+
+
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
@@ -266,11 +456,33 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz) // deallocuvm(pgdir, KERNBASE, 
     return oldsz;
 
   a = PGROUNDUP(newsz);
+  deallocuvm2(pgdir, KERNBASE, 0);
+  cprintf("--------start deallocuvm--------\n");
   for(; a < oldsz; a += PGSIZE*1024){
+    
     pte = walkpgdir(pgdir, (char*)a, 0);
     if(!pte){
-      a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
+      //a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
+      // 여기서부터 추가함
+
+      a = PG1ADDR(PD1X(a) + 1, 0, 0, 0) - PGSIZE;
+      // for(; a  < oldsz; a += PGSIZE){
+      //   cprintf("################\n");
+      //   pde = pde_walkpgdir(pgdir, (char*)a, 0);
+      //   if(!pde)
+      //     a = PG1ADDR(PD1X(a), PD2X(a) + 1, 0, 0) - PGSIZE;
+      //   else if((*pde & PTE_P) != 0){
+      //     pa = PG1_ADDR(*pde);
+      //     if(pa == 0)
+      //       panic("kfree");
+      //     char *v = P2V(pa);
+      //     kfree(v);
+      //     *pde = 0;
+      //   }
+      // }
+      // 여기까지
     }
+      
     else if((*pte & PTE_P) != 0){
       pa = PTE_ADDR(*pte);
       if(pa == 0)
@@ -280,11 +492,12 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz) // deallocuvm(pgdir, KERNBASE, 
       *pte = 0;
     }
   }
+  cprintf("--------finish deallocuvm--------\n");
   return newsz;
 }
 
 void
-freevm(pde_t *pgdir)
+freevm1111(pde_t *pgdir)
 {
   uint i;
   if(pgdir == 0)
@@ -297,6 +510,58 @@ freevm(pde_t *pgdir)
     }
   }
   kfree((char*)pgdir);
+}
+
+// Free a page table and all the physical memory pages
+// in the user part.
+void
+freevm(pde_t *pgdir)
+{
+  uint i, j;
+  pde_t *pde1, *pde2;
+  pde_t *pgdir2;
+  pte_t *pgtab;
+  if(pgdir == 0)
+    panic("freevm: no pgdir");
+  cprintf("--------freevm--------\n");
+  deallocuvm(pgdir, KERNBASE, 0);
+  cprintf("--------finish freevm--------\n");
+  for(i = 0; i < 32; i++){ //NPDENTRIES
+    if(pgdir[i] & PTE_P){
+      // char * v = P2V(PTE_ADDR(pgdir[i]));
+      // kfree(v);
+
+      /////////////////////////////////////
+      // pde1 = &pgdir[i];
+      // pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
+
+      // for(j = 0; j < 32; j++){
+      //   if(pgdir2[j] & PTE_P){
+      //     pde2 = &pgdir2[j];
+      //     //pgtab = (pde_t*)P2V(PTE_ADDR(*pde2));
+      //     char * v2 = P2V(PTE_ADDR(pgdir2[j]));
+      //     cprintf("--------kfree v2-------\n");
+      //     kfree(v2);
+      //   }
+      // }
+      char * v = P2V(PG2_ADDR(pgdir[i]));
+      kfree(v);
+      /////////////////////////////////////
+
+      // cprintf("--------kfree v-------\n");
+      // char * v = P2V(PG1_ADDR(pgdir[i]));
+      // kfree(v);
+      // if(*pde2 & PTE_P){
+      //   char * v2 = P2V(PG1_ADDR(pgdir2[i]));
+      //   cprintf("--------kfree v2-------\n");
+      //   kfree(v2);
+      // }
+      
+    }
+  }
+  cprintf("--------finish freevm 22--------\n");
+  kfree((char*)pgdir);
+  cprintf("--------finish freevm 33--------\n");
 }
 
 // Clear PTE_U on a page. Used to create an inaccessible
@@ -392,7 +657,7 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
  * The LOG macro should be used while performing early debugging only
  * and it'll most likely cause a crash during normal operations.
  */
-#define LOG 0
+#define LOG 1
 #define clprintf(...) if (LOG) cprintf(__VA_ARGS__)
 
 // Returns physical page address from virtual address
@@ -450,7 +715,7 @@ void pagefault(void)
   *pde = *pde_origin;
   //clprintf("Allocated pgtable at 0x%p\n", pte);
 
-  pte = walkpgdir(proc->shadow_pgdir, 0, 1); 
+  pte = k_walkpgdir(proc->shadow_pgdir, 0, 1); ///////// walkpgdir로 바꾸기
   pte_origin = walkpgdir(proc->pgdir, 0, 1);
   *pte = *pte_origin;
   clprintf("Allocated pgtable at 0x%p\n", pte);
