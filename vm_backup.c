@@ -68,7 +68,7 @@ printvm(pde_t *pgdir1)
                 flag = 2;
               }
               if(flag == 2){
-                cprintf("--------- %d: pte : 0x%p, pa: 0x%p\n", pt_index, *pte, V2P(&(*pgtab)));
+                cprintf("-------- %d: pte : 0x%p, pa: 0x%p\n", pt_index, *pte, V2P(&(*pgtab)));
               }
             }
           }
@@ -86,7 +86,7 @@ pde_walkpgdir(pde_t *pgdir1, const void *va, int alloc) // 3 level paging으로 
   pde_t *pde2;
   pde_t *pgdir2;
   pte_t *pgtab;
-  //cprintf("walkpgdir\n");
+  cprintf("walkpgdir\n");
   pde1 = &pgdir1[PD1X(va)];
   if(*pde1 & PTE_P){
     pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
@@ -142,15 +142,12 @@ walkpgdir11(pde_t *pgdir, const void *va, int alloc) // 3 level paging으로 바
 {
   pde_t *pde1;
   pde_t *pde2;
-  pde_t *pgdir2, *pgdir22;
+  pde_t *pgdir2;
   pte_t *pgtab;
-  //cprintf("walkpgdir\n");
+  cprintf("walkpgdir\n");
   pde1 = &pgdir[PD1X(va)];
   if(*pde1 & PTE_P){
-    pgdir2 = (pde_t*)P2V(PTE_ADDR(*pde1)); // PG1_ADDR
-    pgdir22 = (pde_t*)P2V(PG2_ADDR(*pde1));
-    //cprintf("pgdir2 : %p\n", *pgdir2);
-    //cprintf("pgdir22 : %p\n", *pgdir22);
+    pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
     
   } else {
     if(!alloc || (pgdir2 = (pte_t*)kalloc()) == 0) // kalloc() : 새로운 physical page 할당 
@@ -167,7 +164,7 @@ walkpgdir11(pde_t *pgdir, const void *va, int alloc) // 3 level paging으로 바
 
   pde2 = &pgdir2[PD2X(va)];
   if(*pde2 & PTE_P){
-    pgtab = (pte_t*)P2V(PTE_ADDR(*pde2)); // PG2_ADDR
+    pgtab = (pte_t*)P2V(PG2_ADDR(*pde2));
   } else{
     if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
       return 0;
@@ -175,8 +172,6 @@ walkpgdir11(pde_t *pgdir, const void *va, int alloc) // 3 level paging으로 바
     *pde2 = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
     //return 0;
   }
-  //cprintf("success\n");
-  //cprintf("pgtab %p\n", &pgtab[PTX(va)]);
   return &pgtab[PTX(va)];
 }
 
@@ -213,19 +208,26 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm, int is_kernel)
 {
   char *a, *last;
   pte_t *pte;
+  cprintf("--------start mappages--------\n");
   a = (char*)PGROUNDDOWN((uint)va);
   last = (char*)PGROUNDDOWN(((uint)va) + size - 1);
   for(;;){
     if(is_kernel == 1){
+      //cprintf("here in kernel mappages\n");
       if((pte = k_walkpgdir(pgdir, a, 1)) == 0){
+        cprintf("here in kernel mappages222\n");
         return -1;
       }
     }
     else{
+      //clprintf("here in mappages\n");
+      //clprintf("is_kernel : %d\n", is_kernel);
       if((pte = walkpgdir(pgdir, a, 1)) == 0){
+        cprintf("here in mappages222\n");
         return -1;
       } 
     }
+    //clprintf("why--\n");
     if(*pte & PTE_P)
       panic("remap");
     *pte = pa | perm | PTE_P;
@@ -417,7 +419,7 @@ deallocuvm2(pde_t *pgdir, uint oldsz, uint newsz)
     return oldsz;
 
   a = PGROUNDUP(newsz);
-  //cprintf("--------start deallocuvm2--------\n");
+  cprintf("--------start deallocuvm2--------\n");
   for(; a < oldsz; a += PGSIZE){
     pte = walkpgdir(pgdir, (char*)a, 0);
     if(!pte){
@@ -434,9 +436,10 @@ deallocuvm2(pde_t *pgdir, uint oldsz, uint newsz)
       *pte = 0;
     }
   }
-  //cprintf("--------finish deallocuvm2--------\n");
+  cprintf("--------finish deallocuvm2--------\n");
   return newsz;
 }
+
 
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
@@ -453,8 +456,8 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz) // deallocuvm(pgdir, KERNBASE, 
     return oldsz;
 
   a = PGROUNDUP(newsz);
-  //deallocuvm2(pgdir, KERNBASE, 0);
-  //cprintf("--------start deallocuvm--------\n");
+  deallocuvm2(pgdir, KERNBASE, 0);
+  cprintf("--------start deallocuvm--------\n");
   for(; a < oldsz; a += PGSIZE*1024){
     
     pte = walkpgdir(pgdir, (char*)a, 0);
@@ -489,12 +492,12 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz) // deallocuvm(pgdir, KERNBASE, 
       *pte = 0;
     }
   }
-  //cprintf("--------finish deallocuvm--------\n");
+  cprintf("--------finish deallocuvm--------\n");
   return newsz;
 }
 
 void
-freevm(pde_t *pgdir)
+freevm1111(pde_t *pgdir)
 {
   uint i;
   if(pgdir == 0)
@@ -512,7 +515,7 @@ freevm(pde_t *pgdir)
 // Free a page table and all the physical memory pages
 // in the user part.
 void
-freevm11(pde_t *pgdir)
+freevm(pde_t *pgdir)
 {
   uint i, j;
   pde_t *pde1, *pde2;
@@ -520,34 +523,45 @@ freevm11(pde_t *pgdir)
   pte_t *pgtab;
   if(pgdir == 0)
     panic("freevm: no pgdir");
-  //cprintf("--------freevm--------\n");
+  cprintf("--------freevm--------\n");
   deallocuvm(pgdir, KERNBASE, 0);
-  //cprintf("--------finish freevm--------\n");
+  cprintf("--------finish freevm--------\n");
   for(i = 0; i < 32; i++){ //NPDENTRIES
     if(pgdir[i] & PTE_P){
       // char * v = P2V(PTE_ADDR(pgdir[i]));
       // kfree(v);
 
       /////////////////////////////////////
-      pde1 = &pgdir[i];
-      pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
+      // pde1 = &pgdir[i];
+      // pgdir2 = (pde_t*)P2V(PG1_ADDR(*pde1));
 
-      for(j = 0; j < 32; j++){
-        if(pgdir2[j] & PTE_P){
-          pde2 = &pgdir2[j];
-          //pgtab = (pde_t*)P2V(PTE_ADDR(*pde2));
-          char * v2 = P2V(PTE_ADDR(pgdir2[j]));
-          //cprintf("--------kfree v2-------\n");
-          kfree(v2);
-        }
-      }
+      // for(j = 0; j < 32; j++){
+      //   if(pgdir2[j] & PTE_P){
+      //     pde2 = &pgdir2[j];
+      //     //pgtab = (pde_t*)P2V(PTE_ADDR(*pde2));
+      //     char * v2 = P2V(PTE_ADDR(pgdir2[j]));
+      //     cprintf("--------kfree v2-------\n");
+      //     kfree(v2);
+      //   }
+      // }
       char * v = P2V(PG2_ADDR(pgdir[i]));
       kfree(v);
       /////////////////////////////////////
 
+      // cprintf("--------kfree v-------\n");
+      // char * v = P2V(PG1_ADDR(pgdir[i]));
+      // kfree(v);
+      // if(*pde2 & PTE_P){
+      //   char * v2 = P2V(PG1_ADDR(pgdir2[i]));
+      //   cprintf("--------kfree v2-------\n");
+      //   kfree(v2);
+      // }
+      
     }
   }
+  cprintf("--------finish freevm 22--------\n");
   kfree((char*)pgdir);
+  cprintf("--------finish freevm 33--------\n");
 }
 
 // Clear PTE_U on a page. Used to create an inaccessible
@@ -643,7 +657,7 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
  * The LOG macro should be used while performing early debugging only
  * and it'll most likely cause a crash during normal operations.
  */
-#define LOG 0
+#define LOG 1
 #define clprintf(...) if (LOG) cprintf(__VA_ARGS__)
 
 // Returns physical page address from virtual address

@@ -89,3 +89,10 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int 
+sys_pvminfo(void)
+{
+  pvminfo();
+  return 0;
+}
